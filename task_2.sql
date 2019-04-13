@@ -1,6 +1,6 @@
 -- CREATE TYPE departments AS ENUM ('Производство', 'Поддержка пользователей', 'Бухгалтерия', 'Администрация');
 -- CREATE TYPE conds AS ENUM ('Новая', 'Переоткрыта', 'Выполняется', 'Закрыта');
-drop table if exists users, projects, tasks, tasks2 cascade;
+drop table if exists users, projects, tasks, tasks2, test_char cascade;
 
 create table if not exists users (
   uname varchar(20) not null,
@@ -67,28 +67,67 @@ insert into tasks(header, priority, description, condition, estimate, elaps_time
                  ('TEST9', 143, NULL, 'Переоткрыта', 12, 0, 'Demo-Siberia', 'v.belova', NULL, '2015/04/13'),
                  ('TEST10', 24, NULL, 'Новая', 1, 0, 'RTK', 'v.ivanova', 'a.kasatkin', '2016/02/23');
 
--- 2.1
-select exec_name, avg(priority) as average_prior from tasks where exec_name is not null group by exec_name order by average_prior desc limit 3;
--- 2.2
-select count(creator_name), Extract(MONTH from start_date) as month, creator_name from tasks where start_date between '2015/01/01' and '2015/12/31' group by creator_name, month;
--- 2.3
-select distinct exec_name, overdo, underdo from tasks
+
+-- 2.1 +
+select exec_name, avg(priority) as average_prior from tasks
+where exec_name is not null
+group by exec_name order by average_prior
+desc limit 3;
+
+-- 2.2 +
+select count(creator_name), Extract(MONTH from start_date) as month, creator_name from tasks
+where start_date between '2015/01/01' and '2015/12/31'
+group by creator_name, month;
+
+-- 2.3 3 times
+select distinct exec_name, overdo, underdo from tasks --2 обращения
 left join (select exec_name as executor1, (sum(elaps_time) - sum(estimate)) as overdo from tasks where exec_name notnull and elaps_time > estimate group by exec_name) as smth1 on executor1 = exec_name
 left join (select exec_name as executor2, (sum(estimate) - sum(elaps_time)) as underdo from tasks where exec_name notnull and estimate > elaps_time group by exec_name) as smth2 on executor2 = exec_name where exec_name notnull;
--- 2.4
-select distinct least(creator_name, exec_name), greatest(creator_name, exec_name) from tasks where exec_name is not null;
--- 2.5
-select login, length(login) as symbols from users order by length(login) desc limit 1;
--- 2.6
 
--- 2.7
-select distinct exec_name, max(priority) from tasks where exec_name is not null group by exec_name order by max(priority) desc;
--- 2.8
-select exec_name, sum(estimate) from tasks where exec_name is not null and priority > (select avg(priority) from tasks) group by exec_name;
--- 2.9
-drop view if exists statistic;
+-- 2 times
+select a.exec_name, sum(a.estimate - a.elaps_time) as "-" , sum(b.elaps_time - b.estimate) as "+" from Tasks a, Tasks b
+where a.exec_name notnull and a.exec_name = b.exec_name and a.estimate >= a.elaps_time and b.estimate >= b.elaps_time group by a.exec_name;
 
-create view statistic as (
+
+
+-- select exec_name, SUM(estimate - elaps_time) AS flow , excess FROM Tasks
+-- LEFT JOIN (SELECT exec_name AS login2, SUM(elaps_time - estimate) AS excess FROM Tasks WHERE (estimate <= elaps_time) GROUP BY exec_name) AS sample2 ON login2 = exec_name
+-- WHERE exec_name NOTNULL AND Tasks.estimate >= Tasks.elaps_time GROUP BY exec_name, excess;
+
+-- select exec_name, (sum(elaps_time) - sum(estimate)) as overdo, (sum(estimate) - sum(elaps_time)) as underdo from tasks
+-- where exec_name notnull group by exec_name;
+
+-- 2.4 +
+select distinct least(creator_name, exec_name), greatest(creator_name, exec_name) from tasks
+where exec_name is not null;
+
+-- 2.5 +
+select login, length(login) as symbols from users order by length(login)
+desc limit 1;
+-- 2.6 +
+drop table if exists test_char;
+
+create table if not exists test_char(
+  a char(100),
+  b varchar(100)
+);
+
+insert into test_char (a, b) values('12345', '12345');
+
+select sum(pg_column_size(a)), sum(pg_column_size(b)) from test_char;
+-- 2.7 +
+select distinct exec_name, max(priority) from tasks
+where exec_name is not null
+group by exec_name order by max(priority)
+desc;
+-- 2.8 +
+select exec_name, sum(estimate) from tasks
+where exec_name is not null and priority > (select avg(priority) from tasks)
+group by exec_name;
+-- 2.9 +
+drop materialized view if exists statistic;
+
+create materialized view statistic as ( --materialized
   select distinct exec_name, done, tasks_amount, on_time, late, closed, opened, processing, work_time, overdo, underdo from tasks
   left join (select exec_name as perf1, count(exec_name) as tasks_amount from tasks where exec_name notnull group by exec_name) as smth1 on perf1 = exec_name
   left join (select exec_name as perf2, count(condition) as done from tasks where exec_name notnull and condition = 'Закрыта' group by exec_name) as smth2 on perf2 = exec_name
@@ -102,4 +141,17 @@ create view statistic as (
   where exec_name notnull
 );
 
+insert into tasks(header, priority, description, condition, estimate, elaps_time, project_name, creator_name, exec_name, start_date) values
+                 ('TEST0', 0, NULL,'Закрыта', 2, 1, 'MVD-Online', 'a.kasatkin', 'v.ivanova', '2015/02/25');
+
+
 select * from statistic;
+
+
+-- 2.10
+
+select login, COUNT(header) from users, tasks where login = exec_name group by login;
+
+select login, work_left from users, (select exec_name, sum(estimate - elaps_time) as work_left from tasks group by exec_name) as sample where login = sample.exec_name;
+
+select * from users where '02' in (select Extract(MONTH from start_date) from tasks where users.login = tasks.exec_name);
